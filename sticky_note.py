@@ -890,23 +890,26 @@ class StickyNoteApp(QWidget):
         html = html.replace("</blockquote>", bq_end)
         
         # 后处理 HTML：将 mdit-py-plugins 生成的任务列表转换为可点击的链接
-        # mdit-py-plugins 生成的格式: <li class="task-list-item"><input type="checkbox" disabled> 或 checked disabled>
+        # mdit-py-plugins 生成的格式: 
+        # <li class="task-list-item"><input class="task-list-item-checkbox" disabled="disabled" type="checkbox">
+        # <li class="task-list-item"><input class="task-list-item-checkbox" checked="checked" disabled="disabled" type="checkbox">
         
         self._checkbox_count = 0
         
         def checkbox_replacer(match):
-            checked_attr = match.group(1)  # 可能包含 'checked' 或为空
+            input_tag = match.group(1)  # 整个 input 标签内容
             idx = self._checkbox_count
             self._checkbox_count += 1
             
-            is_checked = 'checked' in checked_attr if checked_attr else False
+            # 检查是否包含 checked 属性
+            is_checked = 'checked' in input_tag
             icon = "☑\ufe0e" if is_checked else "☐\ufe0e"
             color = "#98c379" if is_checked else "#e06c75"
             
             return f'<li class="task-list-item" style="list-style-type: none;"><a href="checkbox:{idx}" style="text-decoration: none; color: {color}; font-weight: bold; font-family: \'Symbola\', \'Segoe UI Symbol\', \'DejaVu Sans\', sans-serif;">{icon}</a> '
         
         # 匹配 mdit-py-plugins 生成的任务列表格式
-        html = re.sub(r'<li class="task-list-item"><input[^>]*?(checked)?[^>]*disabled[^>]*>\s*', checkbox_replacer, html)
+        html = re.sub(r'<li class="task-list-item"><input([^>]*)>\s*', checkbox_replacer, html)
 
         # 获取 Pygments 生成的 CSS (One Dark 风格的配色)
         pygments_css = HtmlFormatter(style='monokai').get_style_defs('.highlight')
@@ -978,6 +981,30 @@ class StickyNoteApp(QWidget):
         """
         self.editor.setHtml(style + html)
 
+    def update_markdown_source_checkbox(self, checkbox_index, new_checked):
+        """更新 markdown_source 中第 checkbox_index 个复选框的状态"""
+        lines = self.markdown_source.split('\n')
+        new_lines = []
+        current_checkbox_idx = 0
+        
+        for line in lines:
+            # 匹配任务列表行：- [ ] 或 - [x] 或 - [X]
+            match = re.match(r'^(\s*-\s*)\[([ xX])\](.*)$', line)
+            if match:
+                if current_checkbox_idx == checkbox_index:
+                    # 找到目标复选框，切换状态
+                    prefix = match.group(1)
+                    suffix = match.group(3)
+                    new_state = 'x' if new_checked else ' '
+                    new_lines.append(f"{prefix}[{new_state}]{suffix}")
+                else:
+                    new_lines.append(line)
+                current_checkbox_idx += 1
+            else:
+                new_lines.append(line)
+        
+        self.markdown_source = '\n'.join(new_lines)
+
     def eventFilter(self, obj, event):
         # 处理 Markdown 模式下的交互
         if self.is_markdown_mode:
@@ -996,8 +1023,12 @@ class StickyNoteApp(QWidget):
                     # 检查是否点击到复选框
                     if href_right.startswith("checkbox:") and ("☑" in selected_right or "☐" in selected_right):
                         is_checked = "☑" in selected_right
+                        new_checked = not is_checked
                         new_char = "☐\ufe0e" if is_checked else "☑\ufe0e"
                         new_color = "#e06c75" if is_checked else "#98c379"
+                        
+                        # 获取复选框索引
+                        checkbox_index = int(href_right.split(':')[1])
                         
                         new_fmt = QTextCharFormat()
                         new_fmt.setForeground(QColor(new_color))
@@ -1011,6 +1042,8 @@ class StickyNoteApp(QWidget):
                         finally:
                             self.editor.blockSignals(False)
                         
+                        # 立即更新 markdown_source
+                        self.update_markdown_source_checkbox(checkbox_index, new_checked)
                         self.save_current_note()
                         return True
                     
@@ -1023,8 +1056,12 @@ class StickyNoteApp(QWidget):
                     
                     if href_left.startswith("checkbox:") and ("☑" in selected_left or "☐" in selected_left):
                         is_checked = "☑" in selected_left
+                        new_checked = not is_checked
                         new_char = "☐\ufe0e" if is_checked else "☑\ufe0e"
                         new_color = "#e06c75" if is_checked else "#98c379"
+                        
+                        # 获取复选框索引
+                        checkbox_index = int(href_left.split(':')[1])
                         
                         new_fmt = QTextCharFormat()
                         new_fmt.setForeground(QColor(new_color))
@@ -1038,6 +1075,8 @@ class StickyNoteApp(QWidget):
                         finally:
                             self.editor.blockSignals(False)
                         
+                        # 立即更新 markdown_source
+                        self.update_markdown_source_checkbox(checkbox_index, new_checked)
                         self.save_current_note()
                         return True
                     
@@ -1354,7 +1393,21 @@ class StickyNoteApp(QWidget):
         super().closeEvent(event)
 
 if __name__ == "__main__":
+    # 设置应用程序名称（用于 WM_CLASS）
+    # 必须在创建 QApplication 之前设置
+    QApplication.setApplicationName("sticky-note")
+    QApplication.setApplicationDisplayName("Sticky Note")
+    
     app = QApplication(sys.argv)
+    
+    # 设置应用程序的 Desktop Entry 名称，用于面板图标匹配
+    app.setDesktopFileName("sticky-note")
+    
+    # 设置窗口图标（用于任务栏/面板）
+    icon_path = os.path.expanduser("~/.local/share/icons/sticky_note.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+    
     window = StickyNoteApp()
     window.show()
     sys.exit(app.exec())

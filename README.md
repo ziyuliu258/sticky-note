@@ -66,3 +66,20 @@ sudo update-desktop-database
 
 - **Task Scheduling with Date Tags**  
   Use `- [ ]` to create task items, and add `@start(2025-12-01)` or `@due(2025-12-21)` to mark important dates. Click the calendar icon to view all scheduled tasks.
+
+<!-- ## Customization
+
+### Application Icon
+
+The application supports custom icons. To add your own icon:
+
+1. Create an `icons` directory in the project root:
+```bash
+mkdir icons
+```
+
+2. Place your icon file in the `icons` directory as `icon.png` (recommended size: 256x256 pixels)
+
+3. Supported formats: PNG, SVG, ICO, etc.
+
+The application will automatically load `icons/icon.png` if it exists. -->
