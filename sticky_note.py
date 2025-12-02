@@ -97,7 +97,8 @@ class StickyNoteApp(QWidget):
         self._original_empty_lines = []  # 记录原始空行位置
         
         # 默认样式设置
-        self.bg_color = "rgba(40, 44, 52, 220)"
+        self.bg_rgb = (40, 44, 52)  # 背景颜色 RGB
+        self.bg_opacity = 220  # 背景不透明度 (0-255)
         self.text_color = "#abb2bf"
         self.font_size = 12
         
@@ -105,7 +106,7 @@ class StickyNoteApp(QWidget):
         self._resize_edge = None
         self._resize_start_pos = None
         self._resize_start_geometry = None
-        self._edge_margin = 8
+        self._edge_margin = 12  # 边缘检测区域宽度（像素）
         
         # 自动保存定时器
         self.save_timer = QTimer()
@@ -296,7 +297,16 @@ class StickyNoteApp(QWidget):
         
         # 启用鼠标追踪，使得鼠标移动时（即使没有按下按钮）也能触发 mouseMoveEvent
         # 这样可以在鼠标接近窗口边缘时更新光标形状
+        # 需要为所有子控件也启用，否则子控件会拦截鼠标事件
         self.setMouseTracking(True)
+        self.container.setMouseTracking(True)
+        self.header.setMouseTracking(True)
+        self.editor.setMouseTracking(True)
+        self.editor.viewport().setMouseTracking(True)
+        
+        # 为子控件安装事件过滤器，以便在子控件上移动鼠标时也能更新光标
+        self.container.installEventFilter(self)
+        self.header.installEventFilter(self)
         
         # 优化：移除 QGraphicsDropShadowEffect
         # 在 Linux 上，透明窗口的软件模糊阴影极其消耗 CPU 资源，会导致严重的界面卡顿和拖拽延迟。
@@ -310,9 +320,10 @@ class StickyNoteApp(QWidget):
 
     def update_style(self):
         """应用CSS样式，控制圆角和背景"""
+        r, g, b = self.bg_rgb
         self.container.setStyleSheet(f"""
             #Container {{
-                background-color: {self.bg_color};
+                background-color: rgba({r}, {g}, {b}, {self.bg_opacity});
                 border-radius: 15px;
                 border: 1px solid rgba(255, 255, 255, 20);
             }}
@@ -673,6 +684,10 @@ class StickyNoteApp(QWidget):
         color_action = QAction("设置背景颜色", self)
         color_action.triggered.connect(self.change_bg_color)
         menu.addAction(color_action)
+
+        opacity_action = QAction("设置不透明度", self)
+        opacity_action.triggered.connect(self.change_opacity)
+        menu.addAction(opacity_action)
 
         menu.exec(self.editor.mapToGlobal(pos))
 
@@ -1122,6 +1137,14 @@ class StickyNoteApp(QWidget):
                     self.toggle_underline()
                     return True
 
+        # 处理子控件上的鼠标移动事件，更新边缘光标形状
+        if event.type() == QEvent.Type.MouseMove:
+            # 将子控件的局部坐标转换为主窗口坐标
+            global_pos = event.globalPosition().toPoint()
+            local_pos = self.mapFromGlobal(global_pos)
+            edge = self._get_resize_edge(local_pos)
+            self._update_cursor_shape(edge)
+
         return super().eventFilter(obj, event)
 
     def toggle_bold(self):
@@ -1253,10 +1276,85 @@ class StickyNoteApp(QWidget):
             self.update_markdown_view()
 
     def change_bg_color(self):
-        color = QColorDialog.getColor(initial=QColor(40, 44, 52), options=QColorDialog.ColorDialogOption.ShowAlphaChannel)
+        r, g, b = self.bg_rgb
+        initial_color = QColor(r, g, b, self.bg_opacity)
+        color = QColorDialog.getColor(initial=initial_color, options=QColorDialog.ColorDialogOption.ShowAlphaChannel)
         if color.isValid():
-            self.bg_color = f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha()})"
+            self.bg_rgb = (color.red(), color.green(), color.blue())
+            self.bg_opacity = color.alpha()
             self.update_style()
+
+    def change_opacity(self):
+        """打开背景不透明度调节对话框"""
+        from PyQt6.QtWidgets import QDialog, QSlider, QLabel, QVBoxLayout, QHBoxLayout, QPushButton
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("设置背景不透明度")
+        dialog.setFixedSize(300, 120)
+        dialog.setStyleSheet("""
+            QDialog { background-color: #2c313a; }
+            QLabel { color: #abb2bf; font-size: 12px; }
+            QPushButton { 
+                background-color: #3e4451; 
+                color: #abb2bf; 
+                border: none; 
+                padding: 5px 15px; 
+                border-radius: 3px;
+            }
+            QPushButton:hover { background-color: #4e5561; }
+        """)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # 显示当前值的标签 (将 0-255 转换为百分比显示)
+        current_percent = int(self.bg_opacity / 255 * 100)
+        value_label = QLabel(f"背景不透明度: {current_percent}%")
+        value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(value_label)
+        
+        # 滑块
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setMinimum(10)  # 最小 10%
+        slider.setMaximum(100)  # 最大 100%
+        slider.setValue(current_percent)
+        slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                height: 6px;
+                background: #3e4451;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #61afef;
+                width: 16px;
+                margin: -5px 0;
+                border-radius: 8px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #61afef;
+                border-radius: 3px;
+            }
+        """)
+        
+        def on_slider_change(value):
+            value_label.setText(f"背景不透明度: {value}%")
+            # 将百分比转换为 0-255
+            self.bg_opacity = int(value / 100 * 255)
+            self.update_style()
+        
+        slider.valueChanged.connect(on_slider_change)
+        layout.addWidget(slider)
+        
+        # 按钮行
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        ok_btn = QPushButton("确定")
+        ok_btn.clicked.connect(dialog.accept)
+        btn_layout.addWidget(ok_btn)
+        
+        layout.addLayout(btn_layout)
+        
+        dialog.exec()
 
     # --- 窗口拖拽和边缘调整大小逻辑 ---
     
