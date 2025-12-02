@@ -294,6 +294,10 @@ class StickyNoteApp(QWidget):
         # --- 样式渲染 ---
         self.update_style()
         
+        # 启用鼠标追踪，使得鼠标移动时（即使没有按下按钮）也能触发 mouseMoveEvent
+        # 这样可以在鼠标接近窗口边缘时更新光标形状
+        self.setMouseTracking(True)
+        
         # 优化：移除 QGraphicsDropShadowEffect
         # 在 Linux 上，透明窗口的软件模糊阴影极其消耗 CPU 资源，会导致严重的界面卡顿和拖拽延迟。
         # 建议由窗口管理器 (Compositor) 处理阴影，或者为了性能牺牲这个效果。
