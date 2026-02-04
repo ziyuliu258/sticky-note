@@ -7,6 +7,13 @@ from datetime import datetime, date
 
 # --- 环境变量设置 (必须在导入 PyQt6 之前设置) ---
 
+# 0. 强制使用 X11 后端 (xcb)
+# 在 Wayland 下，无边框窗口的拖拽和调整大小功能会出现问题
+# 因为 Wayland 协议限制了应用程序直接移动/调整窗口的能力
+# 设置此环境变量可以让 Qt 使用 XWayland 兼容层，恢复正常的窗口操作
+if os.environ.get("XDG_SESSION_TYPE") == "wayland":
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
+
 # 1. 禁用 Qt 的 Linux 辅助功能支持
 # 这可以解决 "QTextCursor::setPosition: Position out of range" 的报错问题
 # 该错误通常是由于 Qt 的辅助功能接口 (at-spi) 与某些 Linux 发行版不兼容导致的
@@ -17,13 +24,20 @@ os.environ["QT_LINUX_ACCESSIBILITY_ALWAYS_ON"] = "0"
 # 可选，如果你使用fcitx/fcitx5输入法框架，就应该设置，否则注释掉就好。
 os.environ["QT_IM_MODULE"] = "fcitx"
 
-# 尝试添加系统 Qt6 插件路径
+# 尝试添加系统 Qt6 插件路径（包括输入法插件）
 # 注意：如果 pip 安装的 PyQt6 版本与系统 Qt 版本差异过大，加载系统插件可能会失败
-system_plugin_path = "/usr/lib/x86_64-linux-gnu/qt6/plugins"
-if os.path.exists(system_plugin_path):
-    current_paths = os.environ.get("QT_PLUGIN_PATH", "")
-    if system_plugin_path not in current_paths:
-        os.environ["QT_PLUGIN_PATH"] = f"{current_paths}{os.pathsep}{system_plugin_path}" if current_paths else system_plugin_path
+# 常见的 Qt6 插件路径
+qt6_plugin_paths = [
+    "/usr/lib/x86_64-linux-gnu/qt6/plugins",  # Debian/Ubuntu
+    "/usr/lib/qt6/plugins",                    # Arch/其他发行版
+    "/usr/lib64/qt6/plugins",                  # Fedora/RHEL
+]
+current_paths = os.environ.get("QT_PLUGIN_PATH", "")
+for plugin_path in qt6_plugin_paths:
+    if os.path.exists(plugin_path) and plugin_path not in current_paths:
+        current_paths = f"{current_paths}{os.pathsep}{plugin_path}" if current_paths else plugin_path
+if current_paths:
+    os.environ["QT_PLUGIN_PATH"] = current_paths
 
 from markdown_it import MarkdownIt
 from mdit_py_plugins.tasklists import tasklists_plugin
@@ -715,176 +729,47 @@ class StickyNoteApp(QWidget):
             self.markdown_source = self.editor.toPlainText()
             # 保存原始代码块内容，用于还原时保真
             self._original_code_blocks = re.findall(r'```[\s\S]*?```', self.markdown_source)
+            # 保存原始引用块内容，用于还原时保真
+            self._original_blockquotes = self._extract_blockquotes(self.markdown_source)
             # 保存原始的空行位置模式（用于还原时保持一致）
             self._original_empty_lines = [i for i, line in enumerate(self.markdown_source.split('\n')) if line.strip() == '']
             self.update_markdown_view()
             # 允许在渲染模式下编辑
             self.editor.setReadOnly(False) 
             self.is_markdown_mode = True
-
-    def get_markdown_from_rendered(self):
-        """从渲染视图中提取 Markdown 源码"""
-        # 1. 先从文档中提取所有下划线文本（通过遍历文档片段）
-        html = self.editor.toHtml()
-        underline_texts = []
-        
-        # 方法1: 通过遍历 QTextDocument 的片段来获取下划线文本（更可靠）
-        doc = self.editor.document()
-        if doc:
-            block = doc.begin()
-            while block.isValid():
-                it = block.begin()
-                while not it.atEnd():
-                    frag = it.fragment()
-                    if frag.isValid() and frag.charFormat().fontUnderline():
-                        text = frag.text().strip()
-                        # 排除复选框等特殊字符
-                        if text and '☐' not in text and '☑' not in text and '\ufffc' not in text:
-                            underline_texts.append(text)
-                    it += 1
-                block = block.next()
-        
-        # 2. 创建临时编辑器，清除下划线后转 Markdown
-        temp_editor = QTextEdit()
-        temp_editor.setHtml(html)
-        
-        # 遍历清除所有下划线格式
-        doc = temp_editor.document()
-        if doc:
-            block = doc.begin()
-            while block.isValid():
-                it = block.begin()
-                while not it.atEnd():
-                    frag = it.fragment()
-                    if frag.isValid() and frag.charFormat().fontUnderline():
-                        cursor = QTextCursor(doc)
-                        cursor.setPosition(frag.position())
-                        cursor.setPosition(frag.position() + frag.length(), QTextCursor.MoveMode.KeepAnchor)
-                        fmt = QTextCharFormat()
-                        fmt.setFontUnderline(False)
-                        cursor.mergeCharFormat(fmt)
-                    it += 1
-                block = block.next()
-        
-        # 3. 从临时编辑器获取干净的 Markdown
-        try:
-            md = temp_editor.toMarkdown(QTextDocument.MarkdownDialect.GitHub)
-        except AttributeError:
-            md = temp_editor.toMarkdown()
-        
-        # 4. 把下划线文本用 <u> 标签包裹回去
-        for text in underline_texts:
-            # 确保不重复包裹，且精确匹配
-            if text in md and f'<u>{text}</u>' not in md:
-                md = md.replace(text, f'<u>{text}</u>', 1)
-        
-        lines = md.split('\n')
-        new_lines = []
-        in_code_block = False
-        code_block_lines = []
-        code_block_index = 0
+    
+    def _extract_blockquotes(self, markdown_text):
+        """提取 Markdown 中的所有引用块（包括连续的多行引用）"""
+        lines = markdown_text.split('\n')
+        blockquotes = []
+        current_quote = []
         
         for line in lines:
-            processed_line = line
-            is_quote = False
-            
-            # 检测代码块开始
-            if not in_code_block and processed_line.strip().startswith('```'):
-                in_code_block = True
-                code_block_lines = [processed_line]
-                continue
-            
-            # 检测代码块结束
-            if in_code_block:
-                if processed_line.strip() == '```':
-                    # 代码块结束，用原始内容替换
-                    if code_block_index < len(self._original_code_blocks):
-                        new_lines.append(self._original_code_blocks[code_block_index])
-                        code_block_index += 1
-                    else:
-                        # 如果没有保存的原始代码块（新增的代码块），保留转换后的
-                        code_block_lines.append(processed_line)
-                        new_lines.append('\n'.join(code_block_lines))
-                    in_code_block = False
-                    code_block_lines = []
-                else:
-                    code_block_lines.append(processed_line)
-                continue
-            
-            # 0. 去除 Qt toMarkdown 自动添加的前导空格/缩进
-            if re.match(r'^[ ]{1,4}(?![-*+]|\d+\.)', processed_line) and processed_line.strip():
-                processed_line = processed_line.lstrip(' ')
-            
-            # 1. 引用块回退逻辑
-            quote_match = re.match(r'^\|\s*\|\s*\|\s*(.*?)(?:\|)?\s*$', processed_line)
-            if quote_match:
-                content = quote_match.group(1)
-                if re.match(r'^[\s\-\|]+$', line) and '-' in line:
-                    continue
-                processed_line = content
-                is_quote = True
+            # 检查是否是引用行（以 > 开头，允许前面有空格）
+            if re.match(r'^\s*>', line):
+                current_quote.append(line)
+            else:
+                # 非引用行
+                if current_quote:
+                    # 保存之前的引用块
+                    blockquotes.append('\n'.join(current_quote))
+                    current_quote = []
+        
+        # 处理文件末尾的引用块
+        if current_quote:
+            blockquotes.append('\n'.join(current_quote))
+        
+        return blockquotes
 
-            # 2. 复选框回退逻辑
-            if "☑" in processed_line:
-                clean_text = re.sub(r'^\s*(\*|-|\+)?\s*(?:\[.*?\]\(checkbox:\d+\)|☑\ufe0e?|\[x\])\s*', '', processed_line)
-                processed_line = f"- [x] {clean_text}"
-            elif "☐" in processed_line:
-                clean_text = re.sub(r'^\s*(\*|-|\+)?\s*(?:\[.*?\]\(checkbox:\d+\)|☐\ufe0e?|\[ \])\s*', '', processed_line)
-                processed_line = f"- [ ] {clean_text}"
-            
-            # 3. 如果是引用块，添加 > 前缀
-            if is_quote:
-                processed_line = f"> {processed_line}"
-                
-            new_lines.append(processed_line)
+    def get_markdown_from_rendered(self):
+        """从渲染视图中提取 Markdown 源码
         
-        # 合并结果
-        result = '\n'.join(new_lines)
-        
-        # 清理多余空行（代码块外部）
-        # 先保护代码块
-        protected_blocks = re.findall(r'```[\s\S]*?```', result)
-        for i, block in enumerate(protected_blocks):
-            result = result.replace(block, f'__CODE_BLOCK_{i}__', 1)
-        
-        # Qt toMarkdown() 会把单个换行变成段落分隔（双换行）
-        # 先去掉所有空行，然后根据原始空行位置恢复
-        result = re.sub(r'\n\s*\n', '\n', result)
-        
-        # 根据原始空行位置恢复空行
-        if hasattr(self, '_original_empty_lines') and self._original_empty_lines:
-            lines = result.split('\n')
-            restored_lines = []
-            orig_idx = 0  # 原始行索引
-            new_idx = 0   # 新结果行索引
-            
-            while new_idx < len(lines):
-                # 如果原始位置有空行，先插入空行
-                while orig_idx in self._original_empty_lines:
-                    restored_lines.append('')
-                    orig_idx += 1
-                
-                # 添加当前内容行
-                if new_idx < len(lines):
-                    restored_lines.append(lines[new_idx])
-                    new_idx += 1
-                    orig_idx += 1
-            
-            # 处理末尾可能的空行
-            while orig_idx in self._original_empty_lines:
-                restored_lines.append('')
-                orig_idx += 1
-            
-            result = '\n'.join(restored_lines)
-        
-        # 还原代码块
-        for i, block in enumerate(protected_blocks):
-            result = result.replace(f'__CODE_BLOCK_{i}__', block, 1)
-        
-        # 去除首尾多余空白
-        result = result.strip()
-        
-        return result
+        简化策略：直接返回保存的原始 markdown_source，
+        仅更新复选框状态（因为用户可能在渲染模式下点击复选框）
+        """
+        # 返回保存的原始 markdown_source
+        # 复选框状态已经在 eventFilter 中通过 update_markdown_source_checkbox 实时更新了
+        return self.markdown_source
 
     def update_markdown_view(self):
         """更新 Markdown 渲染视图（用于刷新字体大小或内容）"""
@@ -893,6 +778,20 @@ class StickyNoteApp(QWidget):
 
         # 使用 markdown-it-py 转换 HTML
         html = md_parser.render(self.markdown_source)
+        
+        # 修复引用块内的换行问题
+        # markdown-it 渲染的 <blockquote> 内容中，换行符被保留但 Qt 不会显示为换行
+        # 需要把 <blockquote>...</blockquote> 内部的换行符转换成 <br> 标签
+        def fix_blockquote_newlines(match):
+            content = match.group(1)
+            # 将换行符替换为 <br>，但保留 HTML 标签
+            # 先处理 <p> 标签内的换行
+            content = re.sub(r'(<p>)(.*?)(</p>)', 
+                           lambda m: m.group(1) + m.group(2).replace('\n', '<br>') + m.group(3), 
+                           content, flags=re.DOTALL)
+            return f'<blockquote>{content}</blockquote>'
+        
+        html = re.sub(r'<blockquote>(.*?)</blockquote>', fix_blockquote_newlines, html, flags=re.DOTALL)
         
         # 模拟 GitHub 引用样式：使用表格实现竖线效果 (Qt CSS border-left 支持不佳)
         # 替换 <blockquote> 为表格结构
