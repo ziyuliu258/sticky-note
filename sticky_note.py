@@ -793,19 +793,25 @@ class StickyNoteApp(QWidget):
         
         html = re.sub(r'<blockquote>(.*?)</blockquote>', fix_blockquote_newlines, html, flags=re.DOTALL)
         
-        # 模拟 GitHub 引用样式：使用表格实现竖线效果 (Qt CSS border-left 支持不佳)
-        # 替换 <blockquote> 为表格结构
-        bq_start = (
-            '<table border="0" cellpadding="0" cellspacing="0" width="100%">'
-            '<tr>'
-            '<td width="4" bgcolor="#5c6370"></td>' # 灰色竖线
-            '<td width="8"></td>' # 间距
-            '<td style="color: #828997;">' # 内容区
-        )
-        bq_end = '</td></tr></table>'
+        # 模拟 GitHub 引用样式：用 Unicode 竖线字符实现细竖线
+        def replace_blockquote(match):
+            content = match.group(1)
+            # 去掉 <p> 和 </p> 标签
+            content = re.sub(r'</?p>', '', content)
+            content = content.strip()
+            
+            # 处理多行：每行前面加上竖线字符
+            # 用 ┃ (U+2503) 粗一点的竖线，line-height: 1.1 让竖线连起来
+            lines = content.split('<br>')
+            formatted_lines = []
+            for line in lines:
+                line = line.strip()
+                if line:
+                    formatted_lines.append(f'<span style="color: #61afef;">┃</span>&nbsp;&nbsp;<span style="color: #8b95a7;">{line}</span>')
+            
+            return f'<p style="margin: 4px 0; line-height: 0.7;">{"<br>".join(formatted_lines)}</p>'
         
-        html = html.replace("<blockquote>", bq_start)
-        html = html.replace("</blockquote>", bq_end)
+        html = re.sub(r'<blockquote>(.*?)</blockquote>', replace_blockquote, html, flags=re.DOTALL)
         
         # 后处理 HTML：将 mdit-py-plugins 生成的任务列表转换为可点击的链接
         # mdit-py-plugins 生成的格式: 
@@ -894,6 +900,28 @@ class StickyNoteApp(QWidget):
             a {{
                 cursor: pointer;
                 text-decoration: none;
+            }}
+            /* 普通表格样式 */
+            table {{
+                border-collapse: collapse;
+                margin: 8px 0;
+                width: 100%;
+            }}
+            th, td {{
+                border: 1px solid #5c6370;
+                padding: 6px 10px;
+                text-align: left;
+            }}
+            th {{
+                background-color: #3e4451;
+                color: #e5c07b;
+                font-weight: bold;
+            }}
+            td {{
+                background-color: #2c313a;
+            }}
+            tr:hover td {{
+                background-color: #3e4451;
             }}
         </style>
         """
