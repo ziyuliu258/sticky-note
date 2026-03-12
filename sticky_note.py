@@ -5,6 +5,24 @@ import re
 import uuid
 from datetime import datetime, date
 
+
+def maybe_reexec_with_project_venv():
+    """Prefer the repo-local virtualenv when launching from a checkout."""
+    script_path = os.path.abspath(__file__)
+    project_dir = os.path.dirname(script_path)
+    venv_python = os.path.join(project_dir, ".venv", "bin", "python")
+    if not os.path.exists(venv_python):
+        return
+    try:
+        if os.path.samefile(sys.executable, venv_python):
+            return
+    except FileNotFoundError:
+        pass
+    os.execv(venv_python, [venv_python, script_path, *sys.argv[1:]])
+
+
+maybe_reexec_with_project_venv()
+
 # --- 环境变量设置 (必须在导入 PyQt6 之前设置) ---
 
 # 0. 强制使用 X11 后端 (xcb)
@@ -39,21 +57,179 @@ for plugin_path in qt6_plugin_paths:
 if current_paths:
     os.environ["QT_PLUGIN_PATH"] = current_paths
 
-from markdown_it import MarkdownIt
-from mdit_py_plugins.tasklists import tasklists_plugin
-from pygments import highlight
-from pygments.lexers import get_lexer_by_name, guess_lexer, TextLexer
-from pygments.formatters import HtmlFormatter
-from pygments.util import ClassNotFound
 
-from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QTextEdit, QPushButton, QCalendarWidget, QLabel, 
-                             QFrame, QColorDialog, QFontDialog, QMenu, QSizeGrip, 
-                             QInputDialog, QMessageBox, QListWidget, QListWidgetItem,
-                             QDialog, QDialogButtonBox, QLineEdit, QDateEdit)
-from PyQt6.QtCore import Qt, QPoint, QDate, QSize, QTimer, QEvent, QRect
-from PyQt6.QtGui import QColor, QFont, QAction, QTextCursor, QIcon, QDesktopServices, QTextDocument, QTextCharFormat, QTextBlockFormat
-from PyQt6.QtCore import QUrl
+def import_or_exit(import_name, package_name, import_fn):
+    """Fail fast with the pip package name instead of a bare ModuleNotFoundError."""
+    try:
+        return import_fn()
+    except ModuleNotFoundError as exc:
+        if exc.name != import_name:
+            raise
+        print(
+            f"Missing dependency: {package_name}\n"
+            f"Install project dependencies with:\n"
+            f"  python -m pip install -r requirements.txt",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+
+
+def _import_markdown_it():
+    from markdown_it import MarkdownIt as imported_markdown_it
+
+    return imported_markdown_it
+
+
+def _import_tasklists_plugin():
+    from mdit_py_plugins.tasklists import tasklists_plugin as imported_tasklists_plugin
+
+    return imported_tasklists_plugin
+
+
+def _import_pygments():
+    from pygments import highlight as imported_highlight
+    from pygments.formatters import HtmlFormatter as imported_html_formatter
+    from pygments.lexers import TextLexer as imported_text_lexer
+    from pygments.lexers import get_lexer_by_name as imported_get_lexer_by_name
+    from pygments.lexers import guess_lexer as imported_guess_lexer
+    from pygments.util import ClassNotFound as imported_class_not_found
+
+    return (
+        imported_highlight,
+        imported_get_lexer_by_name,
+        imported_guess_lexer,
+        imported_text_lexer,
+        imported_html_formatter,
+        imported_class_not_found,
+    )
+
+
+def _import_pyqt6():
+    from PyQt6.QtCore import QDate, QEvent, QPoint, QRect, QSize, QTimer, Qt, QUrl
+    from PyQt6.QtGui import (
+        QAction,
+        QColor,
+        QDesktopServices,
+        QFont,
+        QIcon,
+        QTextBlockFormat,
+        QTextCharFormat,
+        QTextCursor,
+        QTextDocument,
+    )
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QCalendarWidget,
+        QColorDialog,
+        QDateEdit,
+        QDialog,
+        QDialogButtonBox,
+        QFontDialog,
+        QFrame,
+        QHBoxLayout,
+        QInputDialog,
+        QLabel,
+        QLineEdit,
+        QListWidget,
+        QListWidgetItem,
+        QMenu,
+        QMessageBox,
+        QPushButton,
+        QSizeGrip,
+        QTextEdit,
+        QVBoxLayout,
+        QWidget,
+    )
+
+    return (
+        QApplication,
+        QWidget,
+        QVBoxLayout,
+        QHBoxLayout,
+        QTextEdit,
+        QPushButton,
+        QCalendarWidget,
+        QLabel,
+        QFrame,
+        QColorDialog,
+        QFontDialog,
+        QMenu,
+        QSizeGrip,
+        QInputDialog,
+        QMessageBox,
+        QListWidget,
+        QListWidgetItem,
+        QDialog,
+        QDialogButtonBox,
+        QLineEdit,
+        QDateEdit,
+        Qt,
+        QPoint,
+        QDate,
+        QSize,
+        QTimer,
+        QEvent,
+        QRect,
+        QUrl,
+        QColor,
+        QFont,
+        QAction,
+        QTextCursor,
+        QIcon,
+        QDesktopServices,
+        QTextDocument,
+        QTextCharFormat,
+        QTextBlockFormat,
+    )
+
+
+MarkdownIt = import_or_exit("markdown_it", "markdown-it-py", lambda: _import_markdown_it())
+tasklists_plugin = import_or_exit("mdit_py_plugins", "mdit-py-plugins", lambda: _import_tasklists_plugin())
+highlight, get_lexer_by_name, guess_lexer, TextLexer, HtmlFormatter, ClassNotFound = import_or_exit(
+    "pygments",
+    "pygments",
+    lambda: _import_pygments(),
+)
+(
+    QApplication,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QTextEdit,
+    QPushButton,
+    QCalendarWidget,
+    QLabel,
+    QFrame,
+    QColorDialog,
+    QFontDialog,
+    QMenu,
+    QSizeGrip,
+    QInputDialog,
+    QMessageBox,
+    QListWidget,
+    QListWidgetItem,
+    QDialog,
+    QDialogButtonBox,
+    QLineEdit,
+    QDateEdit,
+    Qt,
+    QPoint,
+    QDate,
+    QSize,
+    QTimer,
+    QEvent,
+    QRect,
+    QUrl,
+    QColor,
+    QFont,
+    QAction,
+    QTextCursor,
+    QIcon,
+    QDesktopServices,
+    QTextDocument,
+    QTextCharFormat,
+    QTextBlockFormat,
+) = import_or_exit("PyQt6", "PyQt6", lambda: _import_pyqt6())
 
 # 配置文件路径
 DATA_FILE = os.path.expanduser("~/.local/share/sticky_notes_data.json")
@@ -792,25 +968,34 @@ class StickyNoteApp(QWidget):
             return f'<blockquote>{content}</blockquote>'
         
         html = re.sub(r'<blockquote>(.*?)</blockquote>', fix_blockquote_newlines, html, flags=re.DOTALL)
-        
-        # 模拟 GitHub 引用样式：用 Unicode 竖线字符实现细竖线
+
         def replace_blockquote(match):
             content = match.group(1)
-            # 去掉 <p> 和 </p> 标签
-            content = re.sub(r'</?p>', '', content)
+
+            # markdown-it 在引用块里可能生成 <p>、<ul>/<ol>、<li> 等结构。
+            # 这里先把常见块级标签拍平成“按行展示”的文本，再统一加左侧竖线。
+            content = re.sub(r'</p>\s*<p>', '<br>', content)
+            content = re.sub(r'<br\s*/?>', '\n', content)
+            content = re.sub(r'</li>\s*', '\n', content)
+            content = re.sub(r'<li[^>]*>\s*', '• ', content)
+            content = re.sub(r'</?(ul|ol|p)>', '', content)
             content = content.strip()
-            
-            # 处理多行：每行前面加上竖线字符
-            # 用 ┃ (U+2503) 粗一点的竖线，line-height: 1.1 让竖线连起来
-            lines = content.split('<br>')
+
+            # 处理多行内容，但左侧只绘制一根连续竖线，避免字符竖线断开。
             formatted_lines = []
-            for line in lines:
+            for line in content.split('\n'):
                 line = line.strip()
                 if line:
-                    formatted_lines.append(f'<span style="color: #61afef;">┃</span>&nbsp;&nbsp;<span style="color: #8b95a7;">{line}</span>')
-            
-            return f'<p style="margin: 4px 0; line-height: 0.7;">{"<br>".join(formatted_lines)}</p>'
-        
+                    formatted_lines.append(f'<span style="color: #6f7785;">{line}</span>')
+
+            inner_html = "<br>".join(formatted_lines)
+            return (
+                '<div style="margin: 4px 0 6px 0; '
+                'line-height: 1.15;">'
+                f'{inner_html}'
+                '</div>'
+            )
+
         html = re.sub(r'<blockquote>(.*?)</blockquote>', replace_blockquote, html, flags=re.DOTALL)
         
         # 后处理 HTML：将 mdit-py-plugins 生成的任务列表转换为可点击的链接
@@ -896,6 +1081,25 @@ class StickyNoteApp(QWidget):
             }}
             p {{
                 margin-bottom: 0.5em;
+            }}
+            blockquote {{
+                margin: 8px 0;
+                padding: 8px 12px;
+                background-color: #333842;
+                border: 1px solid #454c59;
+                border-radius: 10px;
+                color: #c8d0df;
+            }}
+            blockquote p {{
+                margin: 0.2em 0;
+            }}
+            blockquote ul, blockquote ol {{
+                margin: 0.25em 0 0.25em 1.2em;
+                padding: 0;
+            }}
+            blockquote li {{
+                margin-left: 0;
+                margin-bottom: 0.15em;
             }}
             a {{
                 cursor: pointer;
